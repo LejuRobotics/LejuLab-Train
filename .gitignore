@@ -12,8 +12,8 @@
 
 # IDE
 **/.idea/
-*/.vscode/*
-**/.vscode/*
+# */.vscode/*
+# **/.vscode/*
 # Don't ignore the top-level .vscode directory as it is
 # used to configure VS Code settings
 
@@ -36,5 +36,5 @@ _repo
 _build
 .lastformat
 
-pyproject.toml
-./pyproject.toml
+# pyproject.toml
+# ./pyproject.toml
