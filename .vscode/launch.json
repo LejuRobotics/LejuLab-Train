@@ -12,7 +12,7 @@
                 "--input_fps",
                 "120",
                 "--robot",
-                "kuavoS5",
+                "kuavoS54",
                 "--npz_output",
                 "source/leju_robot/leju_robot/assets/motion_data/mimic/npz_data/kuavos54_dance_50fps.npz",
                 "--csv_output",
