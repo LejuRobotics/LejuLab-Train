@@ -10,3 +10,4 @@ from .terminations import *  # noqa: F401, F403
 
 from .actions import *
 from .actions_cfg import *
+from .curriculums import *

@@ -42,12 +42,13 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import quat_rotate
 from dataclasses import MISSING
 
-from leju_robot.assets.leju import RobanS14_CFG, KuavoS54_CFG
+from leju_robot.assets.leju import RobanS14_CFG, KuavoS54_CFG, RobanS17_CFG
 from leju_robot.assets.motion_data import MOTION_DIR
 
 ROBOT_CONFIGS = {
     "robanS14": RobanS14_CFG,
     "kuavoS54": KuavoS54_CFG,
+    "robanS17": RobanS17_CFG,
 }
 MOTION_FILES = {
     f"{MOTION_DIR}/mimic/npz_data/kuavos54_dance_50fps.npz",

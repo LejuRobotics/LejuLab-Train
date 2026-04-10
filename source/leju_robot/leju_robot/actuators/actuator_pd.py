@@ -13,7 +13,7 @@ from isaaclab.utils.types import ArticulationActions
 from isaaclab.actuators import DelayedPDActuator
 
 if TYPE_CHECKING:
-    from .actuator_cfg import LejuDelayedPDActuatorCfg
+    from .actuator_cfg import LejuDelayedPDActuatorCfg, LejuDelayedPDActuatorCfg_S17
 import re
 
 class LejuDelayedPDActuator(DelayedPDActuator):
@@ -91,3 +91,53 @@ class LejuDelayedPDActuator(DelayedPDActuator):
         max_effort = torch.where(same_direction, max_effort, self.saturation_effort)
 
         return torch.clip(effort, min=-max_effort, max=max_effort)
+
+
+class LejuDelayedPDActuator_S17(LejuDelayedPDActuator):
+    """Delayed PD actuator for RobanS17 with single-tier linear effort saturation.
+
+    Uses a simpler effort clipping model than the base class:
+    τ_max = τ_sat * (1 - v/v_limit), linearly reducing max torque with velocity.
+    """
+
+    cfg: LejuDelayedPDActuatorCfg_S17
+
+    def __init__(self, cfg: LejuDelayedPDActuatorCfg_S17, *args, **kwargs):
+        super().__init__(cfg, *args, **kwargs)
+        self._saturation_effort = self._build_effort_limit_tensor()
+
+    def _build_effort_limit_tensor(self) -> torch.Tensor:
+        """Build a (1, num_joints) tensor of effort limits from effort_limit_sim config."""
+        effort_cfg = self.cfg.effort_limit_sim
+        limits = []
+        for name in self.joint_names:
+            matched = False
+            for pattern, value in effort_cfg.items():
+                if re.fullmatch(pattern.replace("[l,r]", "[lr]"), name):
+                    limits.append(value)
+                    matched = True
+                    break
+            if not matched:
+                raise ValueError(f"No effort limit for joint: {name}")
+        limits_tensor = torch.ones(
+            (1, len(limits)),
+            device=self.computed_effort.device,
+            dtype=self.computed_effort.dtype,
+            requires_grad=False,
+        )
+        for i, limit in enumerate(limits):
+            limits_tensor[0, i] = limit
+        return limits_tensor
+
+    def _clip_effort(self, effort: torch.Tensor) -> torch.Tensor:
+        """Single-tier linear saturation: τ_max = τ_sat * (1 - v/v_limit)."""
+        safe_vel_ratio = torch.where(
+            self.velocity_limit > 1e-6,
+            self._joint_vel / self.velocity_limit,
+            torch.zeros_like(self._joint_vel),
+        )
+        max_effort = self._saturation_effort * (1.0 - self._joint_vel / self.velocity_limit)
+        max_effort = torch.clip(max_effort, min=self._zeros_effort, max=self.effort_limit)
+        min_effort = self._saturation_effort * (-1.0 - self._joint_vel / self.velocity_limit)
+        min_effort = torch.clip(min_effort, min=-self.effort_limit, max=self._zeros_effort)
+        return torch.clip(effort, min=min_effort, max=max_effort)
