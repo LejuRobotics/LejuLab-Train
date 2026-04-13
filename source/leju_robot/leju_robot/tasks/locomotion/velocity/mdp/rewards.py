@@ -445,3 +445,26 @@ def joint_power_l2(
     )
 
     return torch.sum(torch.abs(joint_power), dim=1)
+
+
+def gravity_aligned_when_stopping(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward upright torso pitch when the velocity command is near zero.
+
+    Migrated from leju_robot_rl S42 task. Only when ||cmd_xy|| < 0.05 (i.e. "stop"
+    command), reward exp(-5 * pitch^2) so that the robot stays vertically aligned.
+    """
+    is_zero_cmd = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) < 0.05
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    root_quat = asset.data.root_link_quat_w
+    w, x, y, z = root_quat[:, 0], root_quat[:, 1], root_quat[:, 2], root_quat[:, 3]
+    pitch = torch.asin(2.0 * (w * y - x * z))
+
+    reward = torch.exp(-5.0 * torch.square(pitch))
+    masked_reward = torch.zeros_like(reward)
+    masked_reward[is_zero_cmd] = reward[is_zero_cmd]
+    return masked_reward

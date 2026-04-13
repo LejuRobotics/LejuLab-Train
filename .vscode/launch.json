@@ -240,6 +240,46 @@
             "program": "${workspaceFolder}/scripts/reinforcement_learning/rsl_rl/play.py",
             "console": "integratedTerminal",
         },
+        // train kuavoS46 rough walk
+        {
+            "name": "train kuavoS46 rough walk",
+            "type": "debugpy",
+            "request": "launch",
+            "args": [
+                "--task",
+                "Velocity-Rough-KuavoS46",
+                "--num_envs",
+                // "4",
+                "8192",
+                "--headless",
+                // "max_iterations",
+                // "1000000",
+                // "--load_run",
+                // "2026-01-30_14-11-54",
+                // "--checkpoint",
+                // "model_2000.pt",
+            ],
+            "program": "${workspaceFolder}/scripts/reinforcement_learning/rsl_rl/train.py",
+            "console": "integratedTerminal",
+        },
+        // play kuavoS46 rough walk
+        {
+            "name": "play kuavoS46 rough walk",
+            "type": "debugpy",
+            "request": "launch",
+            "args": [
+                "--task",
+                "Velocity-Rough-KuavoS46-Play",
+                "--num_envs",
+                "16",
+                "--load_run",
+                "2026-04-10_22-21-00",
+                "--checkpoint",
+                "model_22000.pt",
+            ],
+            "program": "${workspaceFolder}/scripts/reinforcement_learning/rsl_rl/play.py",
+            "console": "integratedTerminal",
+        },
         // train kuavoS54 walk
         {
             "name": "train kuavoS54 walk",
