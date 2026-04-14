@@ -83,12 +83,13 @@ from isaaclab.utils.math import axis_angle_from_quat, quat_apply, quat_conjugate
 ##
 # Pre-defined configs
 ##
-from leju_robot.assets.leju import RobanS14_CFG, KuavoS54_CFG, RobanS17_CFG
+from leju_robot.assets.leju import RobanS14_CFG, KuavoS54_CFG, RobanS17_CFG, KuavoS53_CFG
 
 ROBOT_CONFIGS = {
     "robanS14": RobanS14_CFG,
     "kuavoS54": KuavoS54_CFG,
     "robanS17": RobanS17_CFG,
+    "kuavoS53": KuavoS53_CFG,
 }
 
 @configclass

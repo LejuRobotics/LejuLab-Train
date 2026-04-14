@@ -42,13 +42,14 @@ from dataclasses import MISSING
 ##
 # Pre-defined configs
 ##
-from leju_robot.assets.leju import RobanS14_CFG, KuavoS54_CFG, RobanS17_CFG
+from leju_robot.assets.leju import RobanS14_CFG, KuavoS54_CFG, RobanS17_CFG, KuavoS53_CFG
 from leju_robot.tasks.tracking.mdp.commands import MotionLoader
 
 ROBOT_CONFIGS = {
     "robanS14": RobanS14_CFG,
     "kuavoS54": KuavoS54_CFG,
     "robanS17": RobanS17_CFG,
+    "kuavoS53": KuavoS53_CFG,
 }
 
 

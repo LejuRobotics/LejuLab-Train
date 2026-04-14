@@ -59,3 +59,10 @@ class RobanS17DancePPORunnerCfg(RobotFlatPPORunnerCfg):
         super().__post_init__()
         self.experiment_name = "robanS17_dance"
         self.max_iterations = 60000
+
+@configclass
+class KuavoS53DancePPORunnerCfg(RobotFlatPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.experiment_name = "kuavoS53_dance"
+        self.max_iterations = 60000

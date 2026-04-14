@@ -54,3 +54,11 @@ class KuavoS46WalkPPORunnerCfg(RobotPPORunnerCfg):
         super().__post_init__()
         self.experiment_name = "kuavoS46_walk"
         self.max_iterations = 60000
+
+
+@configclass
+class KuavoS53WalkPPORunnerCfg(RobotPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.experiment_name = "kuavoS53_walk"
+        self.max_iterations = 30000
