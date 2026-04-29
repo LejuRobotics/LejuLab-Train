@@ -110,6 +110,45 @@
             "program": "${workspaceFolder}/scripts/reinforcement_learning/rsl_rl/play.py",
             "console": "integratedTerminal",
         },
+        // train robanS17 AMP walk
+        {
+            "name": "train robanS17 AMP walk",
+            "type": "debugpy",
+            "request": "launch",
+            "args": [
+                "--task",
+                "Velocity-AMP-RobanS17",
+                "--num_envs",
+                "4096",
+                "--algorithm",
+                "AMP",
+                "--max_iterations",
+                "30000",
+                "--headless",
+            ],
+            "program": "${workspaceFolder}/scripts/reinforcement_learning/skrl/train.py",
+            "console": "integratedTerminal",
+        },
+        // play robanS17 AMP walk
+        {
+            "name": "play robanS17 AMP walk",
+            "type": "debugpy",
+            "request": "launch",
+            "args": [
+                "--task",
+                "Velocity-AMP-RobanS17-Play",
+                "--num_envs",
+                "32",
+                "--algorithm",
+                "AMP",
+                "--checkpoint",
+                "amp_model_600000.pt",
+                "--output_name",
+                "amp_model_600000.onnx",
+            ],
+            "program": "${workspaceFolder}/scripts/reinforcement_learning/skrl/play.py",
+            "console": "integratedTerminal",
+        },
         //  train robanS14 dance
         {
             "name": "train robanS14 dance",

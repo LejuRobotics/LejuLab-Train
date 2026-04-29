@@ -865,6 +865,70 @@ class RobanS17ArticulationCfg(ArticulationCfg):
 
 RobanS17_CFG = RobanS17ArticulationCfg()
 
+RobanS17_AMP_CFG = RobanS17ArticulationCfg(
+    spawn=RobanS17_CFG.spawn.replace(asset_path=f"{ASSET_DIR}/robanS17/urdf/robanS17_0204.urdf"),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 0.77),
+        rot=(1.0, 0.0, 0.0, 0.0),
+        # 0309默认姿态
+        joint_pos={
+            "waist_yaw_joint": 0.0,
+            "leg_l1_joint": -0.05033,
+            "leg_l2_joint": -0.0164,
+            "leg_l3_joint": -0.0233,
+            "leg_l4_joint": 0.155,
+            "leg_l5_joint": -0.1,
+            "leg_l6_joint": 0,
+            
+            "leg_r1_joint": 0.05033,
+            "leg_r2_joint": 0.0164,
+            "leg_r3_joint": -0.0233,
+            "leg_r4_joint": 0.155,
+            "leg_r5_joint": -0.1,
+            "leg_r6_joint": 0,
+
+            # "zarm_l1_joint": 0.2,
+            # "zarm_l2_joint": 0.210,
+            # "zarm_l3_joint": -0.4,
+            # "zarm_l4_joint": -0.6,
+            # "zarm_r1_joint": 0.2,
+            # "zarm_r2_joint": -0.210,
+            # "zarm_r3_joint": 0.4,
+            # "zarm_r4_joint": -0.6,
+
+            "zarm_l1_joint": 0.2,
+            "zarm_l2_joint": 0.1,
+            "zarm_l3_joint": -0.2,
+            "zarm_l4_joint": -0.6,
+
+            "zarm_r1_joint": 0.2,
+            "zarm_r2_joint": -0.1,
+            "zarm_r3_joint": 0.2,
+            "zarm_r4_joint": -0.6,
+        },   
+        
+        joint_vel={".*": 0.0},
+    ),
+    soft_joint_pos_limit_factor=1.0,
+    actuators={
+        "motor": RobanS17_CFG.actuators["motor"].replace(
+            damping={
+                "waist_yaw_joint": 2.557,
+                "leg_[l,r]1_joint": 3.557,
+                "leg_[l,r]2_joint": 8.308,
+                "leg_[l,r]3_joint": 3.557,
+                "leg_[l,r]4_joint": 8.308,
+                "leg_[l,r]5_joint": 1.907,
+                "leg_[l,r]6_joint": 1.907,
+                "zarm_[l,r]1_joint": 0.907,
+                "zarm_[l,r]2_joint": 0.907,
+                "zarm_[l,r]3_joint": 0.907,
+                "zarm_[l,r]4_joint": 0.907,
+            },
+        ),
+    },
+)
+
 
 KUAVOS46_MDP_JOINT_ORDER_CFG = SceneEntityCfg(
     "robot",

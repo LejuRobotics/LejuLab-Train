@@ -38,3 +38,4 @@ _build
 
 pyproject.toml
 ./pyproject.toml
+!source/leju_robot/leju_robot/tasks/amp/skrl/pyproject.toml

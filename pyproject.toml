@@ -93,3 +93,15 @@ reportMissingModuleSource = "none" # -> most common: prettytable in mdp managers
 reportGeneralTypeIssues = "none"       # -> raises 218 errors (usage of literal MISSING in dataclasses)
 reportOptionalMemberAccess = "warning" # -> raises 8 errors
 reportPrivateUsage = "warning"
+
+# ty LSP/CLI reads [tool.ty.environment]; it does not use python.analysis.extraPaths (Pylance).
+# ty rejects non-existent extra-path entries; keep machine-specific paths in sync with .vscode/settings.json
+# or a local ty.toml. Pyright extraPaths above may list other machines for CI/teammates.
+[tool.ty.environment]
+extra-paths = [
+    "/home/oem/isaaclab210/IsaacLab/source/isaaclab",
+    "/home/oem/isaaclab210/IsaacLab/source/isaaclab_assets",
+    "/home/oem/isaaclab210/IsaacLab/source/isaaclab_mimic",
+    "/home/oem/isaaclab210/IsaacLab/source/isaaclab_rl",
+    "/home/oem/isaaclab210/IsaacLab/source/isaaclab_tasks",
+]

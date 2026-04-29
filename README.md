@@ -34,10 +34,11 @@ This framework is built on the following core dependencies with specific version
 - **Isaac Sim**: 4.5.0
 - **Isaac Lab**: 2.1
 - **RSL-RL**: Included with Isaac Lab 2.1 (via `isaaclab_rl` package)
+- **SKRL**: Customized based on version 1.4.3
 - **PyTorch**: Compatible with Isaac Lab 2.1 requirements
 - **CUDA**: Required for GPU acceleration (compatible with Isaac Sim 4.5.0)
 
-**Note**: The RSL-RL library is integrated into Isaac Lab 2.1 as part of the `isaaclab_rl` package.
+**Note**: The RSL-RL library is integrated into Isaac Lab 2.1 as part of the `isaaclab_rl` package. The SKRL library is custom-modified for AMP tasks in this project, rather than using the standard upstream distribution.
 
 ### Installation
 
@@ -51,6 +52,7 @@ This framework is built on the following core dependencies with specific version
 
 3. **Install dependencies**:
    ```bash
+   pip install -e leju_robot/tasks/amp/skrl/skrl  # Install local customized SKRL
    pip install -r requirements.txt  # If available
    ```
 
@@ -88,6 +90,9 @@ LejuRobot_lab/
 │   │   ├── assets/                 # Robot asset definitions
 │   │   ├── actuators/              # Actuator configurations
 │   │   └── tasks/                  # Task definitions
+│   │       ├── amp/                # AMP base task modules
+│   │       │   ├── envs/           # AMP manager-based environment implementation
+│   │       │   └── skrl/           # skrl-based AMP implementation
 │   │       ├── tracking/           # Motion tracking tasks (dance, standup)
 │   │       │   ├── agents/         # RL agent configs
 │   │       │   ├── mdp/            # MDP components
@@ -95,12 +100,16 @@ LejuRobot_lab/
 │   │       │       ├── robanS14/    # RobanS14 configs (dance, standup)
 │   │       │       └── kuavoS52/   # KuavoS52 configs (dance)
 │   │       └── locomotion/         # Locomotion velocity tasks
-│   │           └── velocity/        # Velocity control tasks
-│   │               ├── agents/     # RL agent configs
+│   │           ├── velocity/       # Velocity control tasks
+│   │           │   ├── agents/     # RL agent configs
+│   │           │   ├── mdp/        # MDP components
+│   │           │   └── config/     # Robot-specific configs
+│   │           │       ├── robanS14/ # RobanS14 velocity configs
+│   │           │       └── kuavoS52/ # KuavoS52 velocity configs
+│   │           └── velocity_amp/   # AMP velocity control tasks
 │   │               ├── mdp/        # MDP components
-│   │               └── config/      # Robot-specific configs
-│   │                   ├── robanS14/ # RobanS14 velocity configs
-│   │                   └── kuavoS52/ # KuavoS52 velocity configs
+│   │               └── config/     # Robot-specific configs
+│   │                   └── robanS17/ # RobanS17 AMP velocity configs
 │   └── leju_data/                  # Robot data (URDF, meshes, etc.)
 ├── scripts/                        # Utility & training scripts
 │   ├── motion_tool/                # Motion data tools
@@ -109,6 +118,10 @@ LejuRobot_lab/
 │   │   ├── replay_npz.py           # Single NPZ replay
 │   │   └── replay_npz_list.py      # Multiple NPZ replay
 │   └── reinforcement_learning/     # RL training & play scripts
+│       ├── skrl/                   # skrl training scripts
+│       │   ├── train.py            # Train policies (AMP)
+│       │   ├── play.py             # Play trained policies
+│       │   └── exporter.py         # Model export tool
 │       └── rsl_rl/                 # RSL-RL training scripts
 │           ├── train.py            # Train policies (all task types)
 │           └── play.py             # Play trained policies
@@ -189,6 +202,16 @@ python scripts/reinforcement_learning/rsl_rl/train.py \
     --max_iterations 25000
 ```
 
+**Velocity Task (Locomotion with AMP):**
+```bash
+python scripts/reinforcement_learning/skrl/train.py \
+  --task Velocity-AMP-RobanS17 \
+  --num_envs 4096 \
+  --algorithm AMP \
+  --max_iterations 30000 \
+  --headless
+```
+
 **Parameters:**
 - `--task`: Task name (e.g., `Tracking-Dance-Flat-RobanS14`, `Velocity-Flat-RobanS14`)
 - `--motion_file`: Path to reference motion NPZ file (required for tracking tasks)
@@ -209,6 +232,17 @@ python scripts/reinforcement_learning/rsl_rl/play.py \
     --load_run 2026-02-05_15-18-56 \
     --checkpoint model_52500.pt \
     --num_envs 1
+```
+
+Test a Velocity AMP policy:
+```bash
+python scripts/reinforcement_learning/skrl/play.py \
+  --task Velocity-AMP-RobanS17-Play \
+  --num_envs 64 \
+  --algorithm AMP \
+  --checkpoint agent_500000.pt \
+  --output_name agent_500000.onnx \
+  --headless
 ```
 
 **Parameters:**
@@ -247,6 +281,7 @@ The project includes pre-configured VS Code debug configurations in `.vscode/lau
      - `train robanS14 walk`: Train RobanS14 velocity control task
      - `train robanS14 dance`: Train RobanS14 dance tracking task
      - `train robanS14 standup`: Train RobanS14 standup tracking task
+     - `train robanS17 AMP walk`: Train RobanS17 AMP velocity control task
      - `train kuavoS52 walk`: Train KuavoS52 velocity control task
      - `train kuavoS52 dance`: Train KuavoS52 dance tracking task
    
@@ -254,6 +289,7 @@ The project includes pre-configured VS Code debug configurations in `.vscode/lau
      - `play robanS14 walk`: Test trained RobanS14 velocity policy
      - `play robanS14 dance`: Test trained RobanS14 dance policy
      - `play robanS14 standup`: Test trained RobanS14 standup policy
+     - `play robanS17 AMP walk`: Test trained RobanS17 AMP velocity policy
      - `play kuavoS52 walk`: Test trained KuavoS52 velocity policy
      - `play kuavoS52 dance`: Test trained KuavoS52 dance policy
 
@@ -334,7 +370,7 @@ LejuRobot Lab 是一个基于 Isaac Lab 构建的机器人仿真和强化学习�
 - **动作模仿**：训练 RL 智能体模仿来自 NPZ 文件的参考动作
 - **数据转换**：在 CSV 和 NPZ 格式之间转换动作数据
 - **动作回放**：在 Isaac Sim 中可视化和回放动作序列
-- **RL 训练**：使用 RSL-RL 框架训练策略
+- **RL 训练**：使用多种 RL 框架训练策略,如RSL-RL、SKRL
 - **灵活配置**：支持本地动作文件和 WandB 注册表
 
 ### 系统要求
@@ -345,10 +381,11 @@ LejuRobot Lab 是一个基于 Isaac Lab 构建的机器人仿真和强化学习�
 - **Isaac Sim**: 4.5.0
 - **Isaac Lab**: 2.1
 - **RSL-RL**: 随 Isaac Lab 2.1 包含（通过 `isaaclab_rl` 包）
+- **SKRL**: 在1.4.3版本基础上的本地定制版
 - **PyTorch**: 与 Isaac Lab 2.1 要求兼容
 - **CUDA**: 需要用于 GPU 加速（与 Isaac Sim 4.5.0 兼容）
 
-**注意**：RSL-RL 库已集成到 Isaac Lab 2.1 中，作为 `isaaclab_rl` 包的一部分。
+**注意**：RSL-RL 库已集成到 Isaac Lab 2.1 中，作为 `isaaclab_rl` 包的一部分。SKRL 库针对本项目中的AMP任务进行了定制化修改，不使用一般的发行版。
 
 ### 安装
 
@@ -362,6 +399,7 @@ LejuRobot Lab 是一个基于 Isaac Lab 构建的机器人仿真和强化学习�
 
 3. **安装依赖**：
    ```bash
+   pip install -e leju_robot/tasks/amp/skrl/skrl # 安装本地定制版skrl
    pip install -r requirements.txt  # 如果存在
    ```
 
@@ -399,6 +437,9 @@ LejuRobot_lab/
 │   │   ├── assets/                     # 机器人资源定义
 │   │   ├── actuators/                  # 执行器配置
 │   │   └── tasks/                      # 任务定义
+│   │       ├── amp/                    # AMP 基础任务模块
+│   │       │   ├── envs/               # AMP 管理器环境实现
+│   │       │   └── skrl/               # 基于skrl的amp agent实现
 │   │       ├── tracking/               # 动作跟踪任务（dance, standup）
 │   │       │   ├── agents/             # RL 智能体配置
 │   │       │   ├── mdp/                # MDP 组件
@@ -406,12 +447,16 @@ LejuRobot_lab/
 │   │       │       ├── robanS14/        # RobanS14 配置（dance, standup）
 │   │       │       └── kuavoS52/       # KuavoS52 配置（dance）
 │   │       └── locomotion/             # 运动速度任务
-│   │           └── velocity/            # 速度控制任务
-│   │               ├── agents/         # RL 智能体配置
+│   │           ├── velocity/            # 速度控制任务
+│   │           │   ├── agents/         # RL 智能体配置
+│   │           │   ├── mdp/            # MDP 组件
+│   │           │   └── config/         # 机器人特定配置
+│   │           │       ├── robanS14/   # RobanS14 速度配置
+│   │           │       └── kuavoS52/   # KuavoS52 速度配置
+│   │           └── velocity_amp/       # AMP 速度控制任务
 │   │               ├── mdp/            # MDP 组件
-│   │               └── config/          # 机器人特定配置
-│   │                   ├── robanS14/   # RobanS14 速度配置
-│   │                   └── kuavoS52/   # KuavoS52 速度配置
+│   │               └── config/         # 机器人特定配置
+│   │                   └── robanS17/   # RobanS17 AMP速度控制配置
 │   └── leju_data/                      # 机器人数据（URDF、网格等）
 ├── scripts/                            # 工具脚本 & 训练脚本
 │   ├── motion_tool/                    # 动作数据工具
@@ -420,6 +465,10 @@ LejuRobot_lab/
 │   │   ├── replay_npz.py               # 单个 NPZ 回放
 │   │   └── replay_npz_list.py          # 多个 NPZ 回放
 │   └── reinforcement_learning/         # 强化学习训练 & 回放
+│       ├── skrl/                       # skrl 训练脚本
+│       │   ├── train.py                # 训练策略（AMP）
+│       │   ├── play.py                 # 运行训练好的策略
+│       │   └── exporter.py             # 模型导出工具
 │       └── rsl_rl/                     # RSL-RL 训练脚本
 │           ├── train.py                # 训练策略（所有任务类型）
 │           └── play.py                 # 运行训练好的策略
@@ -500,6 +549,16 @@ python scripts/reinforcement_learning/rsl_rl/train.py \
     --max_iterations 25000
 ```
 
+**速度任务（AMP风格化运动控制）：**
+```bash
+python scripts/reinforcement_learning/skrl/train.py \
+  --task Velocity-AMP-RobanS17 \
+  --num_envs 4096 \
+  --algorithm AMP \
+  --max_iterations 30000 \
+  --headless
+```
+
 **参数说明：**
 - `--task`: 任务名称（如 `Tracking-Dance-Flat-RobanS14`、`Velocity-Flat-RobanS14`）
 - `--motion_file`: 参考动作 NPZ 文件路径（跟踪任务必需）
@@ -520,6 +579,16 @@ python scripts/reinforcement_learning/rsl_rl/play.py \
     --load_run 2026-02-05_15-18-56 \
     --checkpoint model_52500.pt \
     --num_envs 1
+```
+
+测试训练好的AMP策略：
+```bash
+python scripts/reinforcement_learning/skrl/play.py \
+  --task Velocity-AMP-RobanS17-Play \
+  --num_envs 32 \
+  --algorithm AMP \
+  --checkpoint amp_model_600000.pt \
+  --output_name amp_model_600000.onnx
 ```
 
 **参数说明：**
@@ -559,6 +628,7 @@ python scripts/reinforcement_learning/rsl_rl/play.py \
      - `train robanS14 walk`: 训练 RobanS14 速度控制任务
      - `train robanS14 dance`: 训练 RobanS14 舞蹈跟踪任务
      - `train robanS14 standup`: 训练 RobanS14 站立跟踪任务
+     - `train robanS17 AMP walk`: 训练 RobanS14 速度控制任务
      - `train kuavoS52 walk`: 训练 KuavoS52 速度控制任务
      - `train kuavoS52 dance`: 训练 KuavoS52 舞蹈跟踪任务
    
@@ -566,6 +636,7 @@ python scripts/reinforcement_learning/rsl_rl/play.py \
      - `play robanS14 walk`: 测试训练好的 RobanS14 速度策略
      - `play robanS14 dance`: 测试训练好的 RobanS14 舞蹈策略
      - `play robanS14 standup`: 测试训练好的 RobanS14 站立策略
+     - `play robanS17 AMP walk`: 训练 RobanS14 速度控制任务
      - `play kuavoS52 walk`: 测试训练好的 KuavoS52 速度策略
      - `play kuavoS52 dance`: 测试训练好的 KuavoS52 舞蹈策略
 
@@ -597,6 +668,9 @@ python scripts/reinforcement_learning/rsl_rl/play.py \
 - `Velocity-Rough-RobanS14` / `Velocity-Rough-RobanS14-Play`
 - `Velocity-Flat-KuavoS52` / `Velocity-Flat-KuavoS52-Play`
 - `Velocity-Rough-KuavoS52` / `Velocity-Rough-KuavoS52-Play`
+
+**速度任务（AMP风格化运动控制）：**
+- `Velocity-AMP-RobanS17` / `Velocity-AMP-RobanS17-Play`
 
 ### 动作数据格式
 
