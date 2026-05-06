@@ -9,8 +9,10 @@ class RobotPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     save_interval = 500
     experiment_name = ""
     empirical_normalization = True
+    enable_runner_safeguards: bool = False
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
+        noise_std_type="log",
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
@@ -45,7 +47,8 @@ class KuavoS54WalkPPORunnerCfg(RobotPPORunnerCfg):
     def __post_init__(self):
         super().__post_init__()
         self.experiment_name = "kuavoS54_walk"
-        self.max_iterations = 30000
+        self.max_iterations = 60000
+        self.enable_runner_safeguards = True
 
 
 @configclass
@@ -61,4 +64,4 @@ class KuavoS53WalkPPORunnerCfg(RobotPPORunnerCfg):
     def __post_init__(self):
         super().__post_init__()
         self.experiment_name = "kuavoS53_walk"
-        self.max_iterations = 30000
+        self.max_iterations = 60000

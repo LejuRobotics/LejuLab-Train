@@ -21,6 +21,22 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
+def invalid_state(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Terminate when joint positions or velocities contain NaN/Inf.
+
+    Physics simulation can blow up under extreme contact/forces, producing NaN
+    in joint states. These environments must be reset immediately to prevent
+    NaN from propagating into the policy network and corrupting training.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_pos_invalid = ~torch.isfinite(asset.data.joint_pos).all(dim=-1)
+    joint_vel_invalid = ~torch.isfinite(asset.data.joint_vel).all(dim=-1)
+    return joint_pos_invalid | joint_vel_invalid
+
+
 def terrain_out_of_bounds(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),

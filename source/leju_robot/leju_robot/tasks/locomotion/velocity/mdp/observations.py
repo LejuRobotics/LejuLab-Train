@@ -248,6 +248,33 @@ def feet_air_time_obs(
     return air_time
 
 
+def gait_phase_obs(
+    env: ManagerBasedRLEnv,
+    period: float,
+    offset: list[float],
+) -> torch.Tensor:
+    """Gait phase observation as sin/cos pairs for each leg.
+
+    Outputs a [num_envs, 2*num_legs] tensor. Each leg gets (sin(2π×phase), cos(2π×phase)).
+    Parameters ``period`` and ``offset`` must match those used in the ``feet_gait`` reward
+    so the policy sees the same phase the reward function evaluates.
+    """
+    import math
+
+    # episode_length_buf is created after load_managers(), so it doesn't exist
+    # when the observation manager calls this function to infer output shape.
+    if not hasattr(env, "episode_length_buf"):
+        return torch.zeros(env.num_envs, 2 * len(offset), device=env.device)
+
+    phase_base = (env.episode_length_buf * env.step_dt) % period / period
+    result = []
+    for off in offset:
+        phase = (phase_base + off) % 1.0
+        result.append(torch.sin(2 * math.pi * phase).unsqueeze(1))
+        result.append(torch.cos(2 * math.pi * phase).unsqueeze(1))
+    return torch.cat(result, dim=-1)
+
+
 class history_obs(ManagerTermBase):
     """Accumulate history frames of other observation terms in the same group."""
     

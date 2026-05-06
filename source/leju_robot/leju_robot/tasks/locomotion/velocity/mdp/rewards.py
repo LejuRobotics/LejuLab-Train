@@ -58,7 +58,7 @@ def feet_air_time_clip(
     last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
 
     air_time = (last_air_time - threshold_min) * first_contact
-    air_time = torch.clamp(air_time, max=threshold_max - threshold_min)
+    air_time = torch.clamp(air_time, min=0.0, max=threshold_max - threshold_min)
     reward = torch.sum(air_time, dim=1)
     # no reward for zero command
     reward *= torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > command_threshold
@@ -186,6 +186,31 @@ def base_height_l2(
     return torch.square(base_height - target_height)
 
 
+def base_height_l1(
+    env: ManagerBasedRLEnv,
+    target_height: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg | None = None,
+) -> torch.Tensor:
+    """Penalize asset height from its target using L1 kernel.
+
+    Compared to L2 squared, L1 provides constant gradient regardless of
+    deviation magnitude, giving consistent push toward target height.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    if sensor_cfg is not None:
+        sensor: RayCaster = env.scene[sensor_cfg.name]
+        base_height = asset.data.root_pos_w[:, 2] - sensor.data.ray_hits_w[..., 2].mean(
+            dim=-1
+        )
+    else:
+        base_height = asset.data.root_link_pos_w[:, 2]
+    base_height = torch.nan_to_num(
+        base_height, nan=target_height, posinf=target_height, neginf=target_height
+    )
+    return torch.abs(base_height - target_height)
+
+
 # def track_lin_vel_xy_yaw_frame_exp(
 #     env,
 #     std: float,
@@ -237,19 +262,103 @@ def contact_forces(env: ManagerBasedRLEnv, threshold: float, sensor_cfg: SceneEn
 def stand_still_without_cmd(
     env: ManagerBasedRLEnv,
     command_name: str,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
+    """L1 penalty on joint deviation from default when commanded to stand still."""
     asset: Articulation = env.scene[asset_cfg.name]
     default_joint_pos = asset.data.default_joint_pos_nominal
     current_joint_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
     diff_angle = current_joint_pos - default_joint_pos
     reward = torch.sum(torch.abs(diff_angle), dim=-1)
+
+    command = env.command_manager.get_command(command_name)
+    cmd_low = (
+        torch.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])
+    ) < 0.05
+
+    reward *= cmd_low.float()
+    return reward
+
+
+def joint_vel_at_rest(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """L2 penalty on joint velocity when commanded to stand still."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_vel_sq = torch.sum(torch.square(asset.data.joint_vel), dim=-1)
+
+    cmd = env.command_manager.get_command(command_name)
+    cmd_low = (
+        torch.norm(cmd[:, :2], dim=1) + torch.abs(cmd[:, 2])
+    ) < 0.05
+
+    return joint_vel_sq * cmd_low.float()
+
+
+def flat_orientation_l1(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """L1 penalty on torso tilt (projected gravity horizontal components).
+
+    R25: complements flat_orientation_l2 which uses L2 kernel and is insensitive
+    to small tilt angles (<5°). L1 provides stronger gradient at small angles,
+    preventing the policy from settling into shallow forward lean at cmd=0.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    return torch.sum(torch.abs(asset.data.projected_gravity_b[:, :2]), dim=1)
+
+
+def feet_on_ground_at_rest(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    command_name: str,
+) -> torch.Tensor:
+    """Reward both feet on ground when commanded to stand still.
+
+    R24: strong positive reward for cmd=0 standing. Returns 1.0 when both feet
+    are in contact AND command is near zero, 0 otherwise. Used with weight +3.0
+    to strongly encourage the "stand at attention" behavior at zero command.
+
+    Does NOT affect walking (cmd > 0.05) since zero_flag masks it out.
+    Does NOT constrain joint motion - policy is free to adjust joints for
+    balance, as long as both feet stay on the ground.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0
+    both_on_ground = (is_contact.int().sum(dim=1) == 2).float()
+
     command = env.command_manager.get_command(command_name)
     zero_flag = (
         torch.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])
     ) < 0.05
-    reward *= zero_flag
-    return reward
+    return both_on_ground * zero_flag.float()
+
+
+def stand_still_base_vel(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """L2 penalty on base velocity when commanded to stand still.
+
+    R22: directly penalizes any base motion at zero command. Complements
+    stand_still_without_cmd (joint level) to robustly enforce zero-velocity
+    standing. Uses L2 so small perturbation drift is barely penalized but
+    sustained drift (shuffling) gets strongly penalized.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    vel_sq = torch.sum(torch.square(asset.data.root_lin_vel_w[:, :2]), dim=-1)
+    ang_sq = torch.square(asset.data.root_ang_vel_w[:, 2])
+    reward = vel_sq + 0.5 * ang_sq
+
+    command = env.command_manager.get_command(command_name)
+    zero_flag = (
+        torch.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])
+    ) < 0.05
+    return reward * zero_flag.float()
 
 
 # def joint_deviation_waist_l1(
@@ -288,6 +397,216 @@ def feet_gait(
         cmd_norm = torch.norm(env.command_manager.get_command(command_name), dim=1)
         reward *= cmd_norm > 0.1
     return reward
+
+def arm_swing_coordination(
+    env: ManagerBasedRLEnv,
+    period: float,
+    offset: list[float],
+    amplitude: float,
+    std: float,
+    asset_cfg: SceneEntityCfg,
+    command_name: str,
+) -> torch.Tensor:
+    """Reward contralateral arm-leg coordination.
+
+    Left arm follows right leg phase, right arm follows left leg phase.
+    Uses exponential kernel to reward matching a sinusoidal swing target.
+    """
+    import math
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    shoulder_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
+    shoulder_default = asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    deviation = shoulder_pos - shoulder_default  # [num_envs, 2]: left, right
+
+    phase_base = (env.episode_length_buf * env.step_dt) % period / period
+
+    # Contralateral: left arm (idx 0) follows right leg (offset[1]),
+    #                right arm (idx 1) follows left leg (offset[0])
+    left_arm_target = amplitude * torch.sin(2 * math.pi * ((phase_base + offset[1]) % 1.0))
+    right_arm_target = amplitude * torch.sin(2 * math.pi * ((phase_base + offset[0]) % 1.0))
+
+    error = (deviation[:, 0] - left_arm_target) ** 2 + (deviation[:, 1] - right_arm_target) ** 2
+    reward = torch.exp(-error / (std**2))
+
+    # R11: removed zero-velocity mask — arm swing always active to coordinate with stepping
+
+    return reward
+
+
+def alternating_contacts(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    max_stance_time: float = 0.4,
+    command_name: str | None = None,
+    command_threshold: float = 0.1,
+) -> torch.Tensor:
+    """Reward single-leg stance with time decay + command-based masking.
+
+    R16: adds max_stance_time (time decay to prevent hopping).
+    R20: adds command mask (cmd < threshold → reward=0, follows ETH legged_gym).
+    When combined with stand_still_without_cmd, enables zero-velocity standing.
+
+    Args:
+        max_stance_time: stance time (s) after which reward starts decaying.
+        command_name: if provided, mask reward at zero command.
+        command_threshold: minimum command norm to enable stepping reward (m/s).
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0
+    n_contacts = is_contact.int().sum(dim=1)
+
+    single = (n_contacts == 1).float()
+
+    # Time decay: discourage staying on one foot too long
+    contact_times = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    max_contact = contact_times.max(dim=1)[0]
+    time_factor = torch.clamp(
+        1.0 - (max_contact - max_stance_time) / max_stance_time, 0.0, 1.0
+    )
+
+    reward = single * time_factor - 0.1 * (n_contacts == 0).float()
+
+    # R20: mask at zero command (ETH legged_gym convention)
+    if command_name is not None:
+        cmd_norm = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
+        reward = reward * (cmd_norm > command_threshold).float()
+
+    return reward
+
+
+def contralateral_arm_swing(
+    env: ManagerBasedRLEnv,
+    arm_cfg: SceneEntityCfg,
+    leg_cfg: SceneEntityCfg,
+    scale: float = 1.0,
+    std: float = 0.15,
+) -> torch.Tensor:
+    """Position-based contralateral arm-leg coordination, bounded [0, 1].
+
+    R13: position-based (replaced R12 velocity-product that caused flailing).
+    R19: used knee joint as leg signal (enables stepping arm swing).
+    R20: use symmetric signal (right - left) to remove positional bias.
+         Previous versions caused both arm targets to be biased forward because
+         knee deviation is asymmetric (mostly non-negative).
+
+    Strategy: when right leg is more active (knee bent more, hip forward),
+    left arm swings forward, right arm swings backward. When legs are equal
+    (standing, crouching), targets are 0 → arms at default.
+
+    Args:
+        scale: arm amplitude (typically 1.0 for 1:1 following).
+        std: tolerance for position matching (smaller = stricter).
+    """
+    asset: Articulation = env.scene[arm_cfg.name]
+    arm_dev = (asset.data.joint_pos[:, arm_cfg.joint_ids]
+               - asset.data.default_joint_pos[:, arm_cfg.joint_ids])
+    leg_dev = (asset.data.joint_pos[:, leg_cfg.joint_ids]
+               - asset.data.default_joint_pos[:, leg_cfg.joint_ids])
+
+    # R20: zero-mean signal (right - left) to avoid positional bias
+    diff = leg_dev[:, 1] - leg_dev[:, 0]
+
+    # Contralateral: right leg active → left arm forward (-), right arm backward (+)
+    target_left_arm = -scale * diff
+    target_right_arm = +scale * diff
+
+    error = (arm_dev[:, 0] - target_left_arm) ** 2 + (arm_dev[:, 1] - target_right_arm) ** 2
+    return torch.exp(-error / (std ** 2))
+
+
+def feet_landing_velocity(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+    threshold: float = 0.0,
+) -> torch.Tensor:
+    """[DEPRECATED in R14] Penalize downward foot velocity at first contact.
+
+    Timing issue: foot_vel_z at first_contact is post-impact velocity (already
+    decelerated by ground reaction). Use feet_descent_velocity instead, which
+    measures velocity during the descent phase before contact.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    foot_vel_z = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, 2]
+
+    landing_speed = torch.clamp(-foot_vel_z - threshold, min=0.0) * first_contact
+    return torch.sum(landing_speed, dim=1)
+
+
+def feet_clearance_reward(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+    target_height: float,
+    std: float = 0.05,
+) -> torch.Tensor:
+    """Reward foot clearance during swing phase.
+
+    R15: forces foot to lift to target height during swing, giving the policy
+    more time and distance to control descent → softer landing.
+
+    Uses foot link world z position. On rough terrain (small ±5cm variation),
+    a wider std absorbs the terrain noise. Avoids dependency on scanner sensors.
+
+    Active when foot is in air (not contacting ground). Uses exponential
+    kernel on the height matching, bounded [0, 1] per foot.
+
+    Args:
+        sensor_cfg: contact sensor for both feet (used to detect swing phase).
+        asset_cfg: robot asset with both feet body_ids in alphabetical order [l, r].
+        target_height: desired foot link world z position when in swing (m).
+        std: standard deviation of exponential kernel.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0
+    in_swing = ~is_contact
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    foot_z = asset.data.body_pos_w[:, asset_cfg.body_ids, 2]  # [num_envs, 2] world z
+
+    error = torch.square(foot_z - target_height)
+    reward = torch.exp(-error / (std ** 2)) * in_swing.float()
+    return torch.sum(reward, dim=1)
+
+
+def feet_descent_velocity(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+    height_threshold: float = 0.10,
+) -> torch.Tensor:
+    """Penalize foot descent velocity when approaching the ground.
+
+    R14: replaces feet_landing_velocity which measured post-impact velocity
+    (timing issue: contact resolved before reward computation).
+
+    This version provides dense, proactive feedback during the descent phase,
+    teaching the policy to slow down BEFORE impact.
+
+    Active when:
+    - Foot is in air (no current contact)
+    - Foot ankle height in world frame < height_threshold (close to ground)
+    - Foot is descending (z velocity < 0)
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    foot_pos_z = asset.data.body_pos_w[:, asset_cfg.body_ids, 2]
+    foot_vel_z = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, 2]
+
+    in_air = ~is_contact
+    close_to_ground = foot_pos_z < height_threshold
+    descending = foot_vel_z < 0
+
+    active = (in_air & close_to_ground & descending).float()
+    descent_speed = torch.abs(foot_vel_z) * active
+    return torch.sum(descent_speed, dim=1)
+
 
 def foot_clearance_reward(
     env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, target_height: float, std: float, tanh_mult: float
