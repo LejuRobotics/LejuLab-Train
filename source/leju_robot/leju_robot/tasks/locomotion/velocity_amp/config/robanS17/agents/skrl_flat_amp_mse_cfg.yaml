@@ -90,7 +90,7 @@ agent:
   discriminator_loss_scale: 1.5
   amp_batch_size: 512
   task_reward_weight: 1.0
-  style_reward_weight: 0.02
+  style_reward_weight: 0.0235
   discriminator_batch_size: 4096
   discriminator_reward_scale: 7  #2
   discriminator_logit_regularization_scale: 0.05  # 0.05

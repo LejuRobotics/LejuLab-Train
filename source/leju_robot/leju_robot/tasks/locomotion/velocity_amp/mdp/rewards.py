@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
@@ -73,9 +74,9 @@ def track_lin_vel_xy_yaw_frame_piecewise_exp(
     vx = vel_yaw[:, 0]
     vy = vel_yaw[:, 1]
 
-    lateral_only = (torch.abs(vx_cmd) < 0.2) & (torch.abs(vy_cmd) > 0.1)
-    forward_only = (torch.abs(vx_cmd) > 0.1) & (torch.abs(vy_cmd) < 0.2)
-    full_xy = (torch.abs(vx_cmd) > 0.2) & (torch.abs(vy_cmd) > 0.2)
+    lateral_only = (torch.abs(vx_cmd) < 0.25) & (torch.abs(vy_cmd) > 0.05)
+    forward_only = (torch.abs(vx_cmd) > 0.05) & (torch.abs(vy_cmd) < 0.25)
+    full_xy = (torch.abs(vx_cmd) > 0.25) & (torch.abs(vy_cmd) > 0.25)
 
     lin_vel_error = torch.zeros(env.num_envs, device=env.device)
     lin_vel_error = torch.where(lateral_only, torch.square(vy_cmd - vy) + torch.square(vx), lin_vel_error)
@@ -234,7 +235,7 @@ def feet_aligned_support_penalty_yaw(
     vx_cmd = command[:, 0]
     cmd_mag = torch.abs(vx_cmd)
     cmd_scale = torch.clamp(cmd_mag / max(command_ref, 1e-6), max=1.0)
-    moving_fwd = cmd_mag > 0.1
+    moving_fwd = cmd_mag > 0.05
     cmd_gate = cmd_scale * moving_fwd.float()
 
     min_sep_req = min_fore_aft_separation_base + min_fore_aft_separation_per_vx * cmd_mag
@@ -469,7 +470,117 @@ def arm_swing_gait_phase_reward(
     # While turning (|yaw command| above threshold), scale arm swing reward up; matches cmd gate when command_name is set.
     if command_name is not None:
         turning = torch.abs(command[:, 2]) > 0.1
-        reward = reward * (1.0 + turning.float())
+        reward = reward * (1.0 + 2.0*turning.float())
+    return reward
+
+
+def arm_swing_gait_phase_reward_elbow(
+    env: ManagerBasedRLEnv,
+    period: float,
+    offset: list[float],
+    threshold: float,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    same_side_target: float = 1.0,
+    err_piecewise_split: float = 0.5,
+    command_name: str | None = None,
+    leg_is_left: list[bool] | None = None,
+    elbow_default_offset: float = 0.5,
+    turning_boost: float = 2.0,
+) -> torch.Tensor:
+    """Arm swing reward like :func:`arm_swing_gait_phase_reward`, with a phase-varying elbow target.
+
+    Shoulders match the same piecewise tracking as the base reward. For the contralateral ``zarm_*4``
+    (elbow) joint, the target is
+
+    ``default_joint_pos - elbow_default_offset * abs(sin(pi * s))``,
+
+    where ``s`` is the **contralateral** leg's swing progress in ``[0, 1]`` (0 at swing start/end,
+    0.5 at mid-swing). When the contralateral leg is in stance, ``s = 0`` so the target equals the
+    default pose. The elbow target reaches its minimum when the opposite leg is halfway through
+    its swing phase.
+
+    Exactly two feet are required so the contralateral leg is unambiguous. ``sensor_cfg`` is only
+    used so ``len(body_ids)`` matches ``offset`` length; contact is not used.
+    """
+    n_foot = len(sensor_cfg.body_ids)
+    if n_foot != 2:
+        raise ValueError(
+            "arm_swing_gait_phase_reward_elbow: requires exactly two feet (contralateral elbow)"
+        )
+    if len(offset) != n_foot:
+        raise ValueError(
+            "arm_swing_gait_phase_reward_elbow: len(offset) must match sensor_cfg.body_ids count"
+        )
+
+    global_phase = ((env.episode_length_buf * env.step_dt) % period / period).unsqueeze(1)
+    phases = []
+    for offset_ in offset:
+        phase = (global_phase + offset_) % 1.0
+        phases.append(phase)
+    leg_phase = torch.cat(phases, dim=-1)
+
+    if leg_is_left is None:
+        leg_is_left = [True, False]
+    if len(leg_is_left) != n_foot:
+        raise ValueError("arm_swing_gait_phase_reward_elbow: leg_is_left length must match feet")
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    q = asset.data.joint_pos
+    joint_def = asset.data.default_joint_pos
+    zl = asset.find_joints("zarm_l1_joint")[0]
+    zr = asset.find_joints("zarm_r1_joint")[0]
+    zl4 = asset.find_joints("zarm_l4_joint")[0]
+    zr4 = asset.find_joints("zarm_r4_joint")[0]
+    q_l1 = q[:, zl].reshape(env.num_envs)
+    q_r1 = q[:, zr].reshape(env.num_envs)
+
+    swing_span = max(1.0 - threshold, 1e-6)
+
+    out = torch.zeros(env.num_envs, dtype=torch.float, device=env.device)
+    for i in range(n_foot):
+        is_stance = leg_phase[:, i] < threshold
+        is_swing = ~is_stance
+        j = 1 - i
+        phi_j = leg_phase[:, j]
+        in_swing_j = phi_j >= threshold
+        s = torch.where(
+            in_swing_j,
+            (phi_j - threshold) / swing_span,
+            torch.zeros_like(phi_j),
+        )
+        sin_term = torch.abs(torch.sin(math.pi * s))
+
+        if leg_is_left[i]:
+            t_l, t_r = same_side_target, -same_side_target
+            q_el = q[:, zr4].reshape(env.num_envs)
+            jdef_el = joint_def[:, zr4].reshape(env.num_envs)
+        else:
+            t_l, t_r = -same_side_target, same_side_target
+            q_el = q[:, zl4].reshape(env.num_envs)
+            jdef_el = joint_def[:, zl4].reshape(env.num_envs)
+
+        t_el = jdef_el - elbow_default_offset * sin_term
+        e_sh = 0.5 * (torch.abs(q_l1 - t_l) + torch.abs(q_r1 - t_r))
+        r_sh = _arm_swing_error_to_reward_piecewise(
+            e_sh, max_reward=1.0, err_first_segment=err_piecewise_split
+        )
+        e_el = torch.abs(q_el - t_el)
+        r_el = _arm_swing_error_to_reward_piecewise(
+            e_el, max_reward=1.0, err_first_segment=err_piecewise_split
+        )
+        r_leg = 0.5 * (r_sh + r_el)
+        out = torch.maximum(out, r_leg * is_swing.float())
+
+    if command_name is not None:
+        command = env.command_manager.get_command(command_name)
+        cmd_norm = torch.norm(command, dim=1)
+        out = out * (cmd_norm > 0.1).float()
+
+    reward = torch.clamp(out, 0.0, 1.0).reshape(env.num_envs)
+    if command_name is not None:
+        turning = torch.abs(command[:, 2]) > 0.1
+        reward = reward * (1.0 + (turning_boost - 1.0) * turning.float())
     return reward
 
 
@@ -691,3 +802,54 @@ def feet_y_distance_straight(
     # target_y_distance = 0.23
     # penalty = torch.abs(y_distance - target_y_distance)
     return penalty * is_straight.float()
+
+def fft_dof_symmetry(
+        env: ManagerBasedRLEnv, 
+        asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+        joint_names_pairs: list = ["leg_[l,r]4_link"],
+        linear_x_threshold: float = 0.4,  
+        angular_threshold: float = 0.6,
+        command_name: str = "base_velocity"
+) -> torch.Tensor:
+    
+    """symmetry"""
+    # extract the used quantities (to enable type-hinting)
+    if not hasattr(env, 'joint_action_history_sym'):
+            env.joint_action_history_sym = torch.zeros(
+                env.num_envs, len(joint_names_pairs)*2, 100,
+                device=env.device
+            )
+    env.joint_action_history_sym = torch.roll(env.joint_action_history_sym, 1,dims=2)
+
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    symmetry_metric = torch.zeros(env.num_envs, device=env.device)
+    for i,joint_pair in enumerate(joint_names_pairs):
+        joint_idxs = asset.find_joints(joint_pair)[0]
+    
+    #fft
+        joint_action = env.action_manager.action[:,env.action_manager._terms["joint_pos"]._joint_ids][:,joint_idxs]#action
+        
+        env.joint_action_history_sym[:, i*2:i*2+2, 0] = joint_action
+        joint_history = env.joint_action_history_sym[:, i*2:i*2+2]
+        joint_history_centered = joint_history - joint_history.mean(dim=2, keepdim=True)
+
+        # N = joint_history_centered.shape[-1] 
+        # fs = 1.0 / env.step_dt               
+        # freqs = torch.fft.rfftfreq(N, d=1/fs)
+
+        fft_vals = torch.fft.rfft(joint_history_centered, dim=2)
+        fft_magnitudes = torch.abs(fft_vals)
+
+        topk_vals, topk_idx = torch.topk(fft_magnitudes[:,0,:], k=20, dim=1)
+
+        single_joint_diff = torch.sum(torch.abs(fft_magnitudes[:,0,topk_idx[0]] - fft_magnitudes[:,1,topk_idx[0]]),dim=-1)
+
+
+
+        symmetry_metric += single_joint_diff
+    without_external_force_apply = torch.norm(asset._external_force_b[:,0,:], dim=1)<5
+    big_angular_and_linear = (torch.abs(env.command_manager.get_command(command_name)[:, 2])>angular_threshold) & (env.command_manager.get_command(command_name)[:, 0] > linear_x_threshold)
+    symmetry_metric *= without_external_force_apply
+    symmetry_metric[big_angular_and_linear] *= 0.3
+    return torch.clip(symmetry_metric,max=300)

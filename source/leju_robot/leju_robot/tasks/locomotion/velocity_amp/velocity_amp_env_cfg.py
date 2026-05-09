@@ -355,7 +355,7 @@ class RewardsCfg:
     )
 
     feet_driven_arm_swing = RewTerm(
-        func=mdp.arm_swing_gait_phase_reward,
+        func=mdp.arm_swing_gait_phase_reward_elbow,
         weight=1.0,
         params={
             "period": 0.8,
@@ -428,7 +428,7 @@ class RewardsCfg:
 
     turn_dual_knee_flex = RewTerm(
         func=mdp.turn_swing_knee_flex_penalty,
-        weight=-15.0,
+        weight=-25.0,
         params={
             "command_name": "base_velocity",
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names="leg_[l,r]6_link"),
@@ -440,20 +440,20 @@ class RewardsCfg:
 
     turn_in_place_leg1_abs = RewTerm(
         func=mdp.turn_in_place_leg1_abs_penalty,
-        weight=-1.0,  
+        weight=-10.0,  
         params={"command_name": "base_velocity"},
     )
 
     feet_aligned_stance = RewTerm(
         func=mdp.feet_aligned_support_penalty_yaw,
-        weight=-1.0,
+        weight=-1000.0,
         params={
             "command_name": "base_velocity",
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names="leg_[l,r]6_link"),
             "asset_cfg": SceneEntityCfg("robot", body_names="leg_[l,r]6_link"),
-            "min_fore_aft_separation_base": 0.02,
-            "min_fore_aft_separation_per_vx": 0.2,
-            "min_sep_max": 0.15,
+            "min_fore_aft_separation_base": 0.01,
+            "min_fore_aft_separation_per_vx": 0.3,
+            "min_sep_max": 0.25,
             "command_ref": BASE_VEL_LIN_VEL_X_MAX,
         },
     )
@@ -461,7 +461,30 @@ class RewardsCfg:
     feet_y_distance_straight = RewTerm(func=mdp.feet_y_distance_straight, weight=-1.0, params={
         "command_name": "base_velocity"
     })
+    fft_dof_symmetry = RewTerm(
+        func=mdp.fft_dof_symmetry,
+        weight=-0.015,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot"
+            ),
+            "joint_names_pairs":[
+                    "leg_[l,r]6_joint",
 
+                    "leg_[l,r]5_joint",
+
+                    "leg_[l,r]4_joint",
+                    "leg_[l,r]3_joint",
+                    "zarm_[l,r]1_joint",
+                    "zarm_[l,r]4_joint",
+                    # "leg_[l,r]2_joint",
+                    # "leg_[l,r]1_joint",
+            ],
+            "angular_threshold": 0.6,
+            "command_name" : "base_velocity"
+        },
+        
+    )
 @configclass
 class EventCfg:
     """Configuration for events."""

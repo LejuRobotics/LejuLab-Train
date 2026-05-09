@@ -52,7 +52,7 @@ This framework is built on the following core dependencies with specific version
 
 3. **Install dependencies**:
    ```bash
-   pip install -e leju_robot/tasks/amp/skrl/skrl  # Install local customized SKRL
+   pip install -e leju_robot/tasks/amp/skrl  # Install local customized SKRL
    pip install -r requirements.txt  # If available
    ```
 
@@ -240,9 +240,8 @@ python scripts/reinforcement_learning/skrl/play.py \
   --task Velocity-AMP-RobanS17-Play \
   --num_envs 64 \
   --algorithm AMP \
-  --checkpoint agent_500000.pt \
-  --output_name agent_500000.onnx \
-  --headless
+  --checkpoint agent_24000.pt \
+  --output_name agent_24000.onnx \
 ```
 
 **Parameters:**
@@ -399,7 +398,7 @@ LejuRobot Lab 是一个基于 Isaac Lab 构建的机器人仿真和强化学习�
 
 3. **安装依赖**：
    ```bash
-   pip install -e leju_robot/tasks/amp/skrl/skrl # 安装本地定制版skrl
+   pip install -e leju_robot/tasks/amp/skrl # 安装本地定制版skrl
    pip install -r requirements.txt  # 如果存在
    ```
 
@@ -585,10 +584,10 @@ python scripts/reinforcement_learning/rsl_rl/play.py \
 ```bash
 python scripts/reinforcement_learning/skrl/play.py \
   --task Velocity-AMP-RobanS17-Play \
-  --num_envs 32 \
+  --num_envs 64 \
   --algorithm AMP \
-  --checkpoint amp_model_600000.pt \
-  --output_name amp_model_600000.onnx
+  --checkpoint agent_24000.pt \
+  --output_name agent_24000.onnx \
 ```
 
 **参数说明：**
