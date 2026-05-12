@@ -400,6 +400,27 @@ class RewardsCfg:
         },
     )
 
+    yaw_drift_when_straight = RewTerm(
+        func=mdp.yaw_drift_when_straight,
+        weight=-2.0,
+        params={
+            "command_name": "base_velocity",
+            "cmd_threshold": 0.1,
+        },
+    )
+
+    lateral_joint_mirror = RewTerm(
+        func=mdp.lateral_joint_mirror,
+        weight=-1.0,
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "joint_pairs": [
+                ("leg_l2_joint", "leg_r2_joint"),   # hip_yaw 左右
+                ("leg_l6_joint", "leg_r6_joint"),   # ankle_roll 左右
+            ],
+        },
+    )
+
     # -- feet
     feet_air_time = RewTerm(
         func=mdp.feet_air_time_clip,
@@ -449,7 +470,7 @@ class RewardsCfg:
         },
     )
 
-    # -- arm swing (R13: position-based contralateral, bounded [0, 1])
+    # -- arm swing (position-based contralateral, bounded [0, 1])
     arm_swing = RewTerm(
         func=mdp.contralateral_arm_swing,
         weight=2.0,      
@@ -461,20 +482,24 @@ class RewardsCfg:
         },
     )
 
-    # -- contact force penalty (R15: humanoid-gym-style, only penalize impact peaks)
+    # -- contact force penalty (humanoid-gym-style, only penalize impact peaks)
+    #   - func: contact_forces → contact_forces_on_landing（仅落地瞬间记账一次）
+    #   - weight -0.06→-0.5：10x 补偿稀疏化（信号触发频率从 25% step 降到 5% step）
+    #   - violation_max 750→500：加权重后控制单步极值（0.5×500×2=-500，落在新 reward_clamp 范围内）
+    #   - threshold 950 不变（物理上 1.46×W，正常走路上限）
     contact_force = RewTerm(
-        func=mdp.contact_forces,
-        weight=-0.02,           
+        func=mdp.contact_forces_on_landing,
+        weight=-0.5,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_forces", body_names="leg_[lr]6_link"
             ),
-            "threshold": 820.0,      
-            "violation_max": 500.0,  
+            "threshold": 950.0,
+            "violation_max": 500.0,
         },
     )
 
-    # -- foot clearance (R15: encourage proper foot lift for soft landing)
+    # -- foot clearance (encourage proper foot lift for soft landing)
     feet_clearance = RewTerm(
         func=mdp.feet_clearance_reward,
         weight=1.0,

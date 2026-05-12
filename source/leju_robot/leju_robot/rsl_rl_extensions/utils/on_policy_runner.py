@@ -41,7 +41,7 @@ class RobotOnPolicyRunner(OnPolicyRunner):
         def _safe_step(actions):
             obs, rewards, dones, infos = _original_step(actions)
             rewards = torch.nan_to_num(rewards, nan=0.0)
-            rewards = torch.clamp(rewards, min=-100.0, max=100.0)
+            rewards = torch.clamp(rewards, min=-1000.0, max=1000.0)
             return obs, rewards, dones, infos
 
         self.env.step = _safe_step

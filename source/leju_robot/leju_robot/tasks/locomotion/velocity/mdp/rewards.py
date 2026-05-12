@@ -259,6 +259,30 @@ def contact_forces(env: ManagerBasedRLEnv, threshold: float, sensor_cfg: SceneEn
     return torch.sum(violation.clip(min=0.0, max=violation_max), dim=1)
 
 
+def contact_forces_on_landing(
+    env: ManagerBasedRLEnv,
+    threshold: float,
+    sensor_cfg: SceneEntityCfg,
+    violation_max: float = torch.inf,
+) -> torch.Tensor:
+    """Penalize landing impact peak only at first_contact moment.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+
+    # 检测 air→ground 转换（每脚每次落地恰好触发一次）
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+
+    # 在该 control step 的 history 内取垂直分量峰值
+    # 仅 z 分量，避免 policy 通过倾斜脚把垂直冲击转成水平动量的 gaming
+    net_force_history = contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids]
+    peak_force = torch.max(torch.abs(net_force_history[..., 2]), dim=1)[0]
+
+    violation = (peak_force - threshold).clip(min=0.0, max=violation_max)
+
+    # 仅 first_contact 帧记账，其他帧 reward = 0
+    return torch.sum(violation * first_contact.float(), dim=1)
+
+
 def stand_still_without_cmd(
     env: ManagerBasedRLEnv,
     command_name: str,
@@ -361,6 +385,45 @@ def stand_still_base_vel(
     return reward * zero_flag.float()
 
 
+def yaw_drift_when_straight(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    cmd_threshold: float = 0.1,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """L2 penalty on actual yaw velocity when commanded to go straight.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    cmd_ang_z = env.command_manager.get_command(command_name)[:, 2]
+    actual_yaw_vel = asset.data.root_ang_vel_w[:, 2]
+
+    # 仅 cmd_ang_z 接近 0 时（直行场景）激活
+    straight_flag = (torch.abs(cmd_ang_z) < cmd_threshold).float()
+    return torch.square(actual_yaw_vel) * straight_flag
+
+
+def lateral_joint_mirror(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    joint_pairs: list,
+) -> torch.Tensor:
+    """Penalize anti-symmetric deviation in lateral joints (creates torsion).
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    if not hasattr(env, "_lateral_mirror_cache") or env._lateral_mirror_cache is None:
+        env._lateral_mirror_cache = []
+        for left_name, right_name in joint_pairs:
+            left_id = asset.find_joints(left_name)[0][0]
+            right_id = asset.find_joints(right_name)[0][0]
+            env._lateral_mirror_cache.append((left_id, right_id))
+
+    reward = torch.zeros(env.num_envs, device=env.device)
+    for left_id, right_id in env._lateral_mirror_cache:
+        diff = asset.data.joint_pos[:, left_id] - asset.data.joint_pos[:, right_id]
+        reward += torch.square(diff)
+    return reward / max(len(env._lateral_mirror_cache), 1)
+
+
 # def joint_deviation_waist_l1(
 #     env: ManagerBasedRLEnv,
 #     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
@@ -429,8 +492,6 @@ def arm_swing_coordination(
     error = (deviation[:, 0] - left_arm_target) ** 2 + (deviation[:, 1] - right_arm_target) ** 2
     reward = torch.exp(-error / (std**2))
 
-    # R11: removed zero-velocity mask — arm swing always active to coordinate with stepping
-
     return reward
 
 
@@ -467,7 +528,6 @@ def alternating_contacts(
 
     reward = single * time_factor - 0.1 * (n_contacts == 0).float()
 
-    # R20: mask at zero command (ETH legged_gym convention)
     if command_name is not None:
         cmd_norm = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
         reward = reward * (cmd_norm > command_threshold).float()
@@ -484,12 +544,6 @@ def contralateral_arm_swing(
 ) -> torch.Tensor:
     """Position-based contralateral arm-leg coordination, bounded [0, 1].
 
-    R13: position-based (replaced R12 velocity-product that caused flailing).
-    R19: used knee joint as leg signal (enables stepping arm swing).
-    R20: use symmetric signal (right - left) to remove positional bias.
-         Previous versions caused both arm targets to be biased forward because
-         knee deviation is asymmetric (mostly non-negative).
-
     Strategy: when right leg is more active (knee bent more, hip forward),
     left arm swings forward, right arm swings backward. When legs are equal
     (standing, crouching), targets are 0 → arms at default.
@@ -504,7 +558,7 @@ def contralateral_arm_swing(
     leg_dev = (asset.data.joint_pos[:, leg_cfg.joint_ids]
                - asset.data.default_joint_pos[:, leg_cfg.joint_ids])
 
-    # R20: zero-mean signal (right - left) to avoid positional bias
+    #zero-mean signal (right - left) to avoid positional bias
     diff = leg_dev[:, 1] - leg_dev[:, 0]
 
     # Contralateral: right leg active → left arm forward (-), right arm backward (+)
@@ -546,9 +600,6 @@ def feet_clearance_reward(
 ) -> torch.Tensor:
     """Reward foot clearance during swing phase.
 
-    R15: forces foot to lift to target height during swing, giving the policy
-    more time and distance to control descent → softer landing.
-
     Uses foot link world z position. On rough terrain (small ±5cm variation),
     a wider std absorbs the terrain noise. Avoids dependency on scanner sensors.
 
@@ -580,9 +631,6 @@ def feet_descent_velocity(
     height_threshold: float = 0.10,
 ) -> torch.Tensor:
     """Penalize foot descent velocity when approaching the ground.
-
-    R14: replaces feet_landing_velocity which measured post-impact velocity
-    (timing issue: contact resolved before reward computation).
 
     This version provides dense, proactive feedback during the descent phase,
     teaching the policy to slow down BEFORE impact.
