@@ -304,6 +304,127 @@ def stand_still_without_cmd(
     return reward
 
 
+def joint_deviation_pos_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    target_dev: float = 0.6,
+    std: float = 0.3,
+    command_threshold: float = 0.1,
+) -> torch.Tensor:
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
+    joint_default = asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    deviation = torch.sum(torch.abs(joint_pos - joint_default), dim=-1)
+
+    error = torch.square(deviation - target_dev)
+    reward = torch.exp(-error / (std ** 2))
+
+    cmd_norm = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
+    reward *= (cmd_norm > command_threshold).float()
+    return reward
+
+
+def hip_pitch_phase_swing(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    period: float = 0.7,
+    amplitude: float = 0.4,
+    std: float = 0.3,
+    command_threshold: float = 0.1,
+) -> torch.Tensor:
+    """Phase-locked sinusoidal hip pitch swing reward during walking.
+
+    Unlike joint_deviation_pos_reward (which is gameable by static large angles),
+    this reward requires actual dynamic oscillation matching a clock-based sin target.
+    Left and right legs are in anti-phase (offset 0.5).
+
+    Args:
+        asset_cfg: must resolve to exactly 2 hip pitch joints in alphabetical order
+                   (idx 0 = left, idx 1 = right). Use joint_names=["leg_[l,r]4_joint"].
+        period: gait period in seconds (~0.7s for natural humanoid walking).
+        amplitude: sin amplitude in rad (~0.4 = 23° hip pitch swing).
+        std: gaussian width — std=0.3 gives reward 0.8 at error 0.02, 0.14 at error 0.18.
+        command_threshold: reward = 0 when linear cmd norm < threshold.
+
+    Math verification:
+        - Perfect dynamic swing (both legs follow sin): reward ≈ 1.0 always.
+        - Optimal static (0, 0): avg reward ≈ exp(-0.16/0.09) ≈ 0.17.
+        - Asymmetric static (+0.3, -0.3): avg reward ≈ 0.13.
+        → PPO can NOT cheat by static pose, must dynamically oscillate.
+    """
+    import math
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    # Clock-based phase, [num_envs]
+    phase = (env.episode_length_buf.float() * env.step_dt) % period / period
+
+    # Anti-phase sin targets, [num_envs]
+    left_target = amplitude * torch.sin(2 * math.pi * phase)
+    right_target = amplitude * torch.sin(2 * math.pi * (phase + 0.5))
+
+    # Joint deviation from default, [num_envs, 2]
+    leg_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
+    leg_default = asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    dev = leg_pos - leg_default
+
+    # Squared error sum (left + right), exp kernel
+    error = (dev[:, 0] - left_target) ** 2 + (dev[:, 1] - right_target) ** 2
+    reward = torch.exp(-error / (std ** 2))
+
+    # cmd mask (linear xy only, matches feet_air_time / alternating_contacts)
+    cmd_norm = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
+    reward *= (cmd_norm > command_threshold).float()
+    return reward
+
+
+def hip_pitch_stance_swing(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+    amplitude: float = 0.3,
+    std: float = 0.3,
+    command_threshold: float = 0.1,
+) -> torch.Tensor:
+    """Contact-synced hip pitch swing reward .
+
+    Unlike clock-based phase (D13: PPO has no episode_length observation, can't learn),
+    this reward uses CURRENT foot contact state to define hip pitch target:
+        - Stance leg (foot in contact): target = -amplitude (backward, propulsion)
+        - Swing leg (foot in air):       target = +amplitude (forward, recovery)
+
+    PPO can infer contact state from joint pos/vel observations, so this reward
+    is learnable by a feedforward policy. Auto-syncs to PPO's natural step period.
+
+    Args:
+        sensor_cfg: contact sensor on both feet (alphabetical: left=0, right=1).
+        asset_cfg: hip pitch joints (alphabetical: leg_l4=0, leg_r4=1).
+        amplitude: hip pitch swing magnitude in rad (~0.3 = 17°).
+        std: gaussian width of reward kernel.
+        command_threshold: linear cmd norm gate; reward = 0 below this.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0  # [N, 2]
+
+    # Stance → -A, Swing → +A
+    target_l = torch.where(is_contact[:, 0], -amplitude, amplitude)
+    target_r = torch.where(is_contact[:, 1], -amplitude, amplitude)
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    leg_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
+    leg_default = asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    dev = leg_pos - leg_default
+
+    error = (dev[:, 0] - target_l) ** 2 + (dev[:, 1] - target_r) ** 2
+    reward = torch.exp(-error / (std ** 2))
+
+    cmd_norm = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
+    reward *= (cmd_norm > command_threshold).float()
+    return reward
+
+
 def joint_vel_at_rest(
     env: ManagerBasedRLEnv,
     command_name: str,

@@ -65,3 +65,14 @@ class KuavoS53WalkPPORunnerCfg(RobotPPORunnerCfg):
         super().__post_init__()
         self.experiment_name = "kuavoS53_walk"
         self.max_iterations = 60000
+
+
+@configclass
+class RobanS17WalkPPORunnerCfg(RobotPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.experiment_name = "robanS17_walk"
+        self.max_iterations = 60000
+        # Enable runner safeguards to prevent std<0 crashes in PPO sampling
+        # (same protection as KuavoS54WalkPPORunnerCfg)
+        self.enable_runner_safeguards = True

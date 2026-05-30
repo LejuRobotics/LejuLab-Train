@@ -110,6 +110,44 @@
             "program": "${workspaceFolder}/scripts/reinforcement_learning/rsl_rl/play.py",
             "console": "integratedTerminal",
         },
+        // train robanS17 walk
+        {
+            "name": "train robanS17 walk",
+            "type": "debugpy",
+            "request": "launch",
+            "args": [
+                "--task",
+                "Velocity-Flat-RobanS17",
+                "--num_envs",
+                // "16",
+                "4096",
+                "--headless",
+                // "--load_run",
+                // "<run_id>",
+                // "--checkpoint",
+                // "model_60000.pt",
+            ],
+            "program": "${workspaceFolder}/scripts/reinforcement_learning/rsl_rl/train.py",
+            "console": "integratedTerminal",
+        },
+        // play robanS17 walk
+        {
+            "name": "play robanS17 walk",
+            "type": "debugpy",
+            "request": "launch",
+            "args": [
+                "--task",
+                "Velocity-Flat-RobanS17-Play",
+                "--num_envs",
+                "10",
+                "--load_run",
+                "2026-05-20_10-41-29",
+                "--checkpoint",
+                "model_16000.pt",
+            ],
+            "program": "${workspaceFolder}/scripts/reinforcement_learning/rsl_rl/play.py",
+            "console": "integratedTerminal",
+        },
         // train robanS17 AMP walk
         {
             "name": "train robanS17 AMP walk",
